@@ -1,741 +1,412 @@
-<!-- # Smart Planter Dashboard
+# Smart Indoor Planter Dashboard
 
-## Backend
+Dashboard monitoring dan kontrol tanaman indoor berbasis **ESP32**. Data sensor dikirim ke backend, disimpan di **MySQL**, lalu ditampilkan realtime di dashboard web bergaya Apple (mode terang dan gelap).
 
-<!-- cd backend && cp .env.example .env && npm i && npx prisma migrate deploy && npm run dev
+| Lapisan   | Teknologi                                                                               |
+| --------- | --------------------------------------------------------------------------------------- |
+| Perangkat | ESP32 (PlatformIO, Arduino), DHT11, Soil Moisture, LDR, UV GUVA-S12SD, 2 relay, LCD I2C |
+| Backend   | Node.js, Express, TypeScript, Zod, Prisma ORM                                           |
+| Database  | MySQL 8 (dikelola lewat MySQL Workbench)                                                |
+| Frontend  | Next.js 14 (App Router), Tailwind CSS, Recharts, Lucide                                 |
 
-## Frontend
+```
+ESP32 ──HTTP POST──▶ Backend (Express :4000) ──Prisma──▶ MySQL
+                          │  ▲
+                SSE + REST│  │ POST /api/control
+                          ▼  │
+                    Dashboard (Next.js :3000)
+```
 
-cd frontend && cp .env.example .env.local && npm i && npm run dev # http://localhost:3000
-Catatan: buat database `smart_indoor_planter` di MySQL dulu. Firmware tidak perlu diubah (API_URL tetap /api/telemetry).
+## Daftar isi
 
-## Docker (1 perintah)
-
-docker compose up --build # dashboard: http://localhost:3000, API: http://localhost:4000
-
-## Ambang otomasi
-
-Di `backend/.env`: PUMP_ON/PUMP_OFF (30/70) dan LIGHT_ON/LIGHT_OFF (60/80). Samakan dengan konstanta di firmware.
-`RETENTION_DAYS=0` menyimpan data selamanya; isi angka untuk menghapus log lama otomatis.
- --> -->
-
-````markdown
-# Smart Indoor Planter Dashboard 🌱
-
-Dashboard Full-Stack IoT untuk memonitor dan mengontrol sistem penyiraman serta pencahayaan tanaman cerdas (**Smart Indoor Planter**) berbasis ESP32 secara _real-time_.
-
----
-
-## 🚀 Fitur Utama
-
-- **Real-Time Telemetry**  
-  Memantau kelembapan tanah, suhu ruangan, kelembapan udara, persentase cahaya LDR, dan Indeks UV.
-
-- **Rule-Based Automation**  
-  Aktuator otomatis berupa Pompa Air dan Grow Light dengan sistem _Hysteresis_ yang diproses langsung pada ESP32.
-
-- **Manual Control**  
-  _Override_ kontrol pompa dan lampu melalui antarmuka web menggunakan protokol MQTT.
-
-- **Historical Data & Charts**  
-  Visualisasi data historis sensor menggunakan Recharts.
-
-- **Data Export**  
-  Mengunduh dataset sensor dalam format CSV.
+1. [Kebutuhan](#1-kebutuhan)
+2. [Struktur folder](#2-struktur-folder)
+3. [Langkah 1: Buat database di MySQL Workbench](#3-langkah-1-buat-database-di-mysql-workbench)
+4. [Langkah 2: Setup backend](#4-langkah-2-setup-backend)
+5. [Langkah 3: Setup frontend](#5-langkah-3-setup-frontend)
+6. [Langkah 4: Hubungkan ESP32](#6-langkah-4-hubungkan-esp32)
+7. [Langkah 5: Uji seluruh sistem](#7-langkah-5-uji-seluruh-sistem)
+8. [Variabel environment](#8-variabel-environment)
+9. [Referensi API](#9-referensi-api)
+10. [Menjalankan dengan Docker](#10-menjalankan-dengan-docker-opsional)
+11. [Perintah yang sering dipakai](#11-perintah-yang-sering-dipakai)
+12. [Troubleshooting](#12-troubleshooting)
+13. [Catatan keamanan](#13-catatan-keamanan)
 
 ---
 
-## 🛠️ Tech Stack
+## 1. Kebutuhan
 
-### IoT Hardware
+- **Node.js 20 LTS** (cek dengan `node -v`)
+- **MySQL Server 8** dan **MySQL Workbench**
+- **VS Code** dengan ekstensi **PlatformIO IDE** (untuk firmware ESP32)
+- ESP32 (NodeMCU-32S) yang sudah dirakit sesuai tabel pinout di firmware
 
-- ESP32
-- DHT11
-- Soil Moisture Sensor
-- LDR
-- UV Sensor
-- Relay
-- C++ / PlatformIO
+Laptop dan ESP32 harus berada di **jaringan Wi-Fi yang sama**.
 
-### Frontend
+## 2. Struktur folder
 
-- Next.js
-- React
-- Tailwind CSS
-- Recharts
-- Lucide Icons
-
-### Backend
-
-- Node.js
-- Express.js
-- Server-Sent Events (SSE)
-
-### Database & ORM
-
-- MySQL
-- Prisma ORM
-
-### Messaging
-
-- MQTT
-- HiveMQ Public Broker
+```
+smart-planter-dashboard/
+├── backend/
+│   ├── prisma/
+│   │   ├── schema.prisma          # definisi tabel
+│   │   └── migrations/            # migrasi SQL
+│   ├── src/server.ts              # API, SSE, MQTT, export CSV
+│   ├── .env.example
+│   └── package.json
+├── frontend/
+│   ├── app/                       # page.tsx, layout.tsx, globals.css
+│   ├── lib/api.ts                 # helper pemanggil API
+│   ├── .env.example
+│   └── package.json
+├── docker-compose.yml
+└── README.md
+```
 
 ---
 
-# ⚙️ Panduan Instalasi Lokal
+## 3. Langkah 1: Buat database di MySQL Workbench
 
-## 1. Prasyarat
+Database dibuat **lebih dulu**, sebelum menjalankan backend. Prisma hanya membuat tabel, bukan databasenya.
 
-Pastikan beberapa software berikut sudah terinstal pada komputer:
+1. Buka **MySQL Workbench**.
+2. Klik koneksi lokal Anda (biasanya **Local instance MySQL80**), lalu masukkan password root.
+3. Buka tab query baru dengan `Ctrl + T`.
+4. Tempel perintah berikut:
 
-- [Node.js](https://nodejs.org/) — Versi 18 LTS atau terbaru
-- [MySQL Server](https://dev.mysql.com/downloads/mysql/) — Berjalan pada port `3306`
-- [Git](https://git-scm.com/)
-- PlatformIO — Untuk development ESP32
+   ```sql
+   CREATE DATABASE IF NOT EXISTS smart_indoor_planter
+     CHARACTER SET utf8mb4
+     COLLATE utf8mb4_unicode_ci;
+   ```
 
----
+5. Jalankan dengan ikon petir atau `Ctrl + Enter`.
+6. Di panel **SCHEMAS** sebelah kiri, klik ikon refresh (dua panah melingkar). Database `smart_indoor_planter` akan muncul.
 
-## 2. Setup Database MySQL
+> Nama database harus sama persis dengan yang Anda tulis di `DATABASE_URL` pada langkah berikutnya. Kalau memilih nama lain (misalnya `smart_planter_db`), pakai nama itu di semua tempat.
 
-Buka MySQL Terminal atau aplikasi GUI seperti phpMyAdmin / DBeaver.
-
-Buat database baru dengan perintah berikut:
+**Opsional, untuk produksi:** buat user khusus supaya tidak memakai root.
 
 ```sql
-CREATE DATABASE smart_planter_db;
+CREATE USER 'planter'@'localhost' IDENTIFIED BY 'GantiPasswordIni';
+GRANT ALL PRIVILEGES ON smart_indoor_planter.* TO 'planter'@'localhost';
+FLUSH PRIVILEGES;
 ```
-````
-
-Pastikan database berhasil dibuat sebelum melanjutkan ke konfigurasi backend.
 
 ---
 
-# 🔧 3. Setup Backend
+## 4. Langkah 2: Setup backend
 
-Buka terminal baru dan masuk ke folder backend:
+Buka terminal (Command Prompt, PowerShell, atau terminal VS Code), lalu jalankan satu per satu.
+
+### 4.1 Masuk ke folder backend
 
 ```bash
-cd backend
+cd smart-planter-dashboard/backend
 ```
 
-Install seluruh dependency:
+### 4.2 Buat file `.env`
+
+Windows:
+
+```bash
+copy .env.example .env
+```
+
+macOS / Linux:
+
+```bash
+cp .env.example .env
+```
+
+### 4.3 Isi `DATABASE_URL`
+
+Buka `backend/.env` di VS Code, ubah baris `DATABASE_URL`, lalu tekan `Ctrl + S`.
+
+```env
+DATABASE_URL="mysql://root:PASSWORD_ANDA@localhost:3306/smart_indoor_planter"
+```
+
+Format umum: `mysql://USER:PASSWORD@HOST:PORT/NAMA_DATABASE`.
+
+> Kalau password mengandung karakter khusus, ubah menjadi kode URL: `@` menjadi `%40`, `#` menjadi `%23`, `/` menjadi `%2F`, `:` menjadi `%3A`. Password `Pa@ss#1` ditulis `Pa%40ss%231`.
+
+### 4.4 Install dependensi
 
 ```bash
 npm install
 ```
 
-### Konfigurasi Environment Variable
+### 4.5 Generate Prisma Client
 
-Buat file `.env` di dalam folder `backend`.
-
-Contoh konfigurasi:
-
-```env
-PORT=4000
-DATABASE_URL="mysql://root:@localhost:3306/smart_planter_db"
-MQTT_BROKER="mqtt://broker.hivemq.com:1883"
-CORS_ORIGIN="http://localhost:3000"
+```bash
+npx prisma generate
 ```
 
-> **Catatan:**
-> Jika MySQL kamu menggunakan password, ubah bagian `root:@` menjadi:
->
-> ```text
-> root:PASSWORD@
-> ```
->
-> Contoh:
->
-> ```env
-> DATABASE_URL="mysql://root:password123@localhost:3306/smart_planter_db"
-> ```
+### 4.6 Buat tabel lewat migrasi
 
-### Sinkronisasi Database dengan Prisma
+Pilih **salah satu**:
 
-Jalankan migration:
+**Opsi A, disarankan** (memakai migrasi yang sudah ada di `prisma/migrations`):
+
+```bash
+npx prisma migrate deploy
+```
+
+**Opsi B, untuk pengembangan** (membuat migrasi baru jika `schema.prisma` Anda ubah):
 
 ```bash
 npx prisma migrate dev --name init_smart_planter
 ```
 
-Jika berhasil, Prisma akan membuat tabel-tabel yang dibutuhkan oleh aplikasi.
+> `migrate dev` butuh hak membuat database sementara (shadow database). User `root` sudah cukup. Kalau memakai user khusus, pakai Opsi A.
 
-### Jalankan Backend
+### 4.7 Cek tabel di MySQL Workbench
+
+Kembali ke Workbench, refresh panel SCHEMAS, lalu buka **smart_indoor_planter → Tables**. Atau jalankan:
+
+```sql
+USE smart_indoor_planter;
+SHOW TABLES;
+```
+
+Hasil yang benar berisi tiga tabel:
+
+| Tabel                | Fungsi                                                         |
+| -------------------- | -------------------------------------------------------------- |
+| `TelemetryLog`       | Riwayat semua pembacaan sensor (sumber grafik dan dataset CSV) |
+| `DeviceState`        | Mode dan status terakhir pompa dan lampu                       |
+| `_prisma_migrations` | Catatan migrasi yang sudah dijalankan Prisma                   |
+
+> Di Windows, MySQL bisa menampilkan nama tabel dalam huruf kecil (`telemetrylog`). Itu normal dan tidak mempengaruhi aplikasi.
+
+### 4.8 Jalankan backend
 
 ```bash
 npm run dev
 ```
 
-Backend akan berjalan pada:
+Terminal harus menampilkan:
 
-```text
-http://localhost:4000
 ```
+Backend ready on :4000
+[MQTT] connected
+```
+
+Uji di browser: buka <http://localhost:4000/api/health>. Responsnya:
+
+```json
+{ "status": "ok", "mqtt": true, "deviceOnline": false }
+```
+
+`deviceOnline: false` wajar selama ESP32 belum mengirim data. **Biarkan terminal ini tetap berjalan**, lalu buka terminal baru untuk frontend.
 
 ---
 
-# 🎨 4. Setup Frontend
+## 5. Langkah 3: Setup frontend
 
-Buka terminal baru dan masuk ke folder frontend:
-
-```bash
-cd frontend
-```
-
-Install dependency:
+Di terminal **baru**:
 
 ```bash
+cd smart-planter-dashboard/frontend
+copy .env.example .env.local
 npm install
+npm run dev
 ```
 
-### Konfigurasi Environment Variable
-
-Buat file `.env` di dalam folder `frontend`.
-
-Isi dengan:
+Isi `.env.local` sudah benar untuk penggunaan lokal:
 
 ```env
 NEXT_PUBLIC_API_URL=http://localhost:4000
 ```
 
-### Jalankan Frontend
+Buka <http://localhost:3000>. Sebelum ESP32 menyala, dashboard menampilkan **Perangkat offline** dan grafik kosong. Itu normal.
 
-```bash
-npm run dev
-```
-
-Setelah berhasil dijalankan, buka browser:
-
-```text
-http://localhost:3000
-```
-
-Dashboard Smart Indoor Planter akan tersedia pada alamat tersebut.
+> Setiap kali `.env.local`, `tailwind.config.js`, atau `tsconfig.json` diubah, hentikan server dengan `Ctrl + C`, hapus folder `.next`, lalu jalankan `npm run dev` lagi.
 
 ---
 
-# 📡 5. Koneksi Perangkat Keras ESP32
+## 6. Langkah 4: Hubungkan ESP32
 
-ESP32 harus terhubung ke jaringan Wi-Fi yang sama dengan komputer yang menjalankan backend.
-
-Gunakan jaringan Wi-Fi **2.4 GHz** jika diperlukan oleh modul ESP32.
-
-Jika backend dijalankan pada komputer lokal, ESP32 tidak dapat menggunakan:
-
-```text
-localhost
-```
-
-karena `localhost` dari sisi ESP32 berarti ESP32 itu sendiri.
-
-Gunakan alamat IPv4 komputer yang menjalankan backend.
-
-Contoh konfigurasi pada `main.cpp`:
-
-```cpp
-const char* serverUrl = "http://<IP_KOMPUTER_ANDA>:4000/api/telemetry";
-```
-
-Contoh jika alamat IPv4 komputer adalah `192.168.1.10`:
-
-```cpp
-const char* serverUrl = "http://192.168.1.10:4000/api/telemetry";
-```
-
-### Mengetahui IPv4 Komputer
-
-Pada Windows, buka CMD:
+### 6.1 Cari IP laptop
 
 ```bash
 ipconfig
 ```
 
-Cari bagian:
+Cari **IPv4 Address** pada adapter Wi-Fi yang aktif, misalnya `192.168.0.100`.
 
-```text
-Wireless LAN adapter Wi-Fi
+### 6.2 Atur Wi-Fi dan alamat server di `main.cpp`
+
+```cpp
+const char* ssid      = "NAMA_WIFI_ANDA";
+const char* password  = "PASSWORD_WIFI_ANDA";
+const char* serverUrl = "http://192.168.0.100:4000/api/telemetry";   // IP laptop + port 4000
 ```
 
-Kemudian cari:
+Setiap kali laptop berpindah jaringan atau IP-nya berubah, alamat ini harus diperbarui.
 
-```text
-IPv4 Address
-```
+### 6.3 Izinkan port 4000 di Windows Firewall
 
-Contoh:
-
-```text
-IPv4 Address. . . . . . . . . . . : 192.168.1.10
-```
-
-Gunakan alamat tersebut pada konfigurasi ESP32.
-
----
-
-# 🔄 Arsitektur Sistem
-
-Secara umum, sistem bekerja dengan alur:
-
-```text
-┌─────────────────────┐
-│       ESP32         │
-│                     │
-│  DHT11              │
-│  Soil Moisture      │
-│  LDR                │
-│  UV Sensor          │
-└──────────┬──────────┘
-           │
-           │ Sensor Data
-           ▼
-┌─────────────────────┐
-│   Backend Express   │
-│                     │
-│  REST API           │
-│  MQTT               │
-│  SSE                │
-└──────────┬──────────┘
-           │
-           ├──────────────► MySQL
-           │
-           │ Real-Time Data
-           ▼
-┌─────────────────────┐
-│   Next.js Dashboard │
-│                     │
-│  Sensor Monitoring  │
-│  Charts             │
-│  Manual Control     │
-│  CSV Export         │
-└─────────────────────┘
-```
-
----
-
-# 🤖 Sistem Automation
-
-Sistem automation dijalankan pada ESP32 menggunakan pendekatan **Rule-Based Automation**.
-
-Aktuator yang dikontrol:
-
-- 💧 Water Pump
-- 💡 Grow Light
-
-Sistem menggunakan konsep **Hysteresis** untuk mencegah aktuator terlalu sering melakukan ON/OFF ketika nilai sensor berada di sekitar batas threshold.
-
-Contoh konsep:
-
-```text
-Soil Moisture
-      │
-      ▼
-┌───────────────┐
-│ Check Sensor  │
-└───────┬───────┘
-        │
-        ▼
- Moisture < Lower Threshold?
-        │
-   ┌────┴────┐
-  YES       NO
-   │          │
-   ▼          ▼
-Pump ON    Pump OFF
-```
-
----
-
-# 📊 Monitoring Dashboard
-
-Dashboard menyediakan informasi sensor secara _real-time_, antara lain:
-
-| Sensor           | Data                         |
-| ---------------- | ---------------------------- |
-| 🌱 Soil Moisture | Kelembapan tanah             |
-| 🌡️ DHT11         | Suhu ruangan                 |
-| 💧 DHT11         | Kelembapan udara             |
-| ☀️ LDR           | Persentase intensitas cahaya |
-| 🔆 UV Sensor     | Indeks UV                    |
-
-Data sensor kemudian ditampilkan dalam bentuk:
-
-- Real-time cards
-- Historical charts
-- Status actuator
-- Sensor trends
-- Data table
-
----
-
-# 📥 Data Export
-
-Dashboard menyediakan fitur export data sensor dalam format:
-
-```text
-CSV
-```
-
-Data CSV dapat digunakan untuk:
-
-- Analisis data
-- Dokumentasi
-- Visualisasi tambahan
-- Machine learning
-- Evaluasi performa sistem
-
----
-
-# 📁 Struktur Project
-
-Struktur project secara umum:
-
-```text
-smart-planter-dashboard/
-│
-├── backend/
-│   ├── prisma/
-│   │   └── schema.prisma
-│   │
-│   ├── src/
-│   │   ├── controllers/
-│   │   ├── routes/
-│   │   ├── services/
-│   │   └── index.js
-│   │
-│   ├── .env
-│   ├── package.json
-│   └── ...
-│
-├── frontend/
-│   ├── app/
-│   ├── components/
-│   ├── public/
-│   ├── .env
-│   ├── package.json
-│   └── ...
-│
-├── esp32/
-│   ├── src/
-│   │   └── main.cpp
-│   ├── platformio.ini
-│   └── ...
-│
-├── .gitignore
-└── README.md
-```
-
----
-
-# 🔐 Environment Variables
-
-## Backend
-
-File:
-
-```text
-backend/.env
-```
-
-Contoh:
-
-```env
-PORT=4000
-DATABASE_URL="mysql://root:@localhost:3306/smart_planter_db"
-MQTT_BROKER="mqtt://broker.hivemq.com:1883"
-CORS_ORIGIN="http://localhost:3000"
-```
-
-## Frontend
-
-File:
-
-```text
-frontend/.env
-```
-
-Contoh:
-
-```env
-NEXT_PUBLIC_API_URL=http://localhost:4000
-```
-
-> Jangan upload file `.env` ke GitHub karena dapat berisi credential atau konfigurasi sensitif.
-
----
-
-# 🚫 Git Ignore
-
-Pastikan terdapat `.gitignore` pada project.
-
-Contoh:
-
-```gitignore
-# Dependencies
-node_modules/
-
-# Environment variables
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-
-# Next.js
-.next/
-out/
-
-# Build
-dist/
-build/
-
-# Logs
-*.log
-
-# OS
-.DS_Store
-Thumbs.db
-
-# IDE
-.vscode/
-.idea/
-
-# Prisma
-*.db
-```
-
----
-
-# 🐙 Cara Push ke GitHub
-
-Pastikan kamu sudah membuat repository GitHub:
-
-```text
-https://github.com/joshuaimanuel1/smart-planter-dashboard
-```
-
-Kemudian buka CMD pada folder utama project:
-
-```text
-C:\CollageFastTrack 1\Intelligent Internet of Things\smart-planter-dashboard
-```
-
----
-
-## 1. Inisialisasi Git
+Kalau ESP32 tidak bisa mengirim data padahal Wi-Fi terhubung, biasanya firewall yang memblokir. Buka Command Prompt **sebagai Administrator**:
 
 ```bash
-git init
+netsh advfirewall firewall add rule name="Smart Planter API" dir=in action=allow protocol=TCP localport=4000
 ```
 
-Tambahkan seluruh file:
+### 6.4 Upload firmware
 
-```bash
-git add .
-```
-
-Untuk mengecek file yang akan di-commit:
-
-```bash
-git status
-```
-
-Pastikan file seperti `.env` dan `node_modules` **tidak muncul** dalam daftar file yang akan di-upload.
+Di PlatformIO klik **Upload and Monitor**. Kalau muncul _Wrong boot mode detected_, tahan tombol **BOOT** di ESP32 saat terminal menampilkan `Connecting....`, lalu lepas setelah upload dimulai.
 
 ---
 
-## 2. Buat Commit Pertama
+## 7. Langkah 5: Uji seluruh sistem
 
-```bash
-git commit -m "Initial commit: Fullstack Smart Planter Dashboard with ESP32 integration"
-```
+- [ ] Serial Monitor menampilkan `Telemetri terkirim! HTTP Response code: 200`
+- [ ] Dashboard berubah menjadi **Perangkat online** dalam beberapa detik
+- [ ] Kartu sensor dan grafik bergerak mengikuti pembacaan
+- [ ] Tabel `TelemetryLog` terisi:
 
----
+  ```sql
+  SELECT * FROM smart_indoor_planter.TelemetryLog ORDER BY id DESC LIMIT 10;
+  ```
 
-## 3. Ubah Branch Menjadi `main`
+- [ ] Tombol **Ekspor dataset** mengunduh file CSV
 
-```bash
-git branch -M main
-```
-
----
-
-## 4. Hubungkan dengan Repository GitHub
-
-```bash
-git remote add origin https://github.com/joshuaimanuel1/smart-planter-dashboard.git
-```
-
-Untuk memastikan remote sudah benar:
-
-```bash
-git remote -v
-```
-
-Output kurang lebih:
-
-```text
-origin  https://github.com/joshuaimanuel1/smart-planter-dashboard.git (fetch)
-origin  https://github.com/joshuaimanuel1/smart-planter-dashboard.git (push)
-```
+Kode `400` berarti backend menolak format data. Kode `-1` atau `connection refused` berarti alamat IP atau firewall bermasalah.
 
 ---
 
-## 5. Push ke GitHub
+## 8. Variabel environment
 
-```bash
-git push -u origin main
-```
+### `backend/.env`
 
-Jika GitHub meminta autentikasi, ikuti proses login yang muncul.
+| Variabel                 | Default                         | Keterangan                                                                                     |
+| ------------------------ | ------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`           | (wajib)                         | URL koneksi MySQL                                                                              |
+| `PORT`                   | `4000`                          | Port backend                                                                                   |
+| `CORS_ORIGIN`            | `http://localhost:3000`         | Alamat dashboard yang diizinkan. Pisahkan dengan koma untuk beberapa alamat                    |
+| `MQTT_BROKER`            | `mqtt://broker.hivemq.com:1883` | Broker MQTT (jalur perintah)                                                                   |
+| `SAVE_INTERVAL_MS`       | `5000`                          | Jarak minimal antar penyimpanan ke database                                                    |
+| `DEVICE_API_KEY`         | (kosong)                        | Jika diisi, `POST /api/telemetry` wajib membawa header `x-api-key`. Firmware harus ikut diubah |
+| `RETENTION_DAYS`         | `0`                             | `0` menyimpan data selamanya. Isi angka untuk menghapus log lama otomatis                      |
+| `PUMP_ON` / `PUMP_OFF`   | `30` / `70`                     | Ambang pompa yang ditampilkan dashboard                                                        |
+| `LIGHT_ON` / `LIGHT_OFF` | `60` / `80`                     | Ambang lampu yang ditampilkan dashboard                                                        |
 
-Setelah proses selesai, refresh repository GitHub dan seluruh source code akan tersedia di repository.
+> `RETENTION_DAYS` dan ambang otomasi hanya berlaku jika `server.ts` Anda memakai versi yang membaca variabel tersebut. Kalau tidak, dashboard memakai nilai bawaan 30/70 dan 60/80 yang sudah sesuai firmware.
+>
+> Ambang yang **sebenarnya** menggerakkan relay ada di firmware (`BATAS_POMPA_ON`, `BATAS_POMPA_OFF`, `BATAS_LDR_ON`, `BATAS_LDR_OFF`). Jika Anda mengubahnya, samakan angka di dashboard.
 
----
+### `frontend/.env.local`
 
-# 🔄 Perintah Git untuk Update Project
-
-Setelah melakukan perubahan pada source code, gunakan:
-
-```bash
-git add .
-```
-
-Kemudian:
-
-```bash
-git commit -m "Update smart planter dashboard"
-```
-
-Lalu:
-
-```bash
-git push
-```
+| Variabel              | Default                 | Keterangan                            |
+| --------------------- | ----------------------- | ------------------------------------- |
+| `NEXT_PUBLIC_API_URL` | `http://localhost:4000` | Alamat backend yang dipanggil browser |
 
 ---
 
-# 🧪 Menjalankan Project Setelah Clone
+## 9. Referensi API
 
-Jika project di-clone dari GitHub ke komputer lain, jalankan:
+| Method | Endpoint                               | Fungsi                                                                                        |
+| ------ | -------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `GET`  | `/api/health`                          | Cek status backend, database, MQTT, dan perangkat                                             |
+| `POST` | `/api/telemetry`                       | Menerima data dari ESP32                                                                      |
+| `GET`  | `/api/stream`                          | Siaran realtime (Server-Sent Events) ke dashboard                                             |
+| `GET`  | `/api/dashboard?range=1h\|6h\|24h\|7d` | Data grafik, statistik, dan riwayat aktuator                                                  |
+| `POST` | `/api/control`                         | Kirim perintah mode, pompa, atau lampu                                                        |
+| `GET`  | `/api/export-csv?from=ISO&to=ISO`      | Unduh dataset CSV. `from` dan `to` opsional. Tambahkan `count=1` untuk hanya menghitung baris |
 
-### Backend
+Contoh payload dari ESP32:
+
+```json
+{
+  "deviceId": "esp32-planter-01",
+  "temperature": 25.3,
+  "humidity": 64,
+  "soilMoisture": 54,
+  "soilStatus": "LEMBAB",
+  "ldrLight": 62,
+  "uvIndex": 0.0,
+  "pumpOn": true,
+  "growlightOn": false
+}
+```
+
+Backend juga menerima nama field snake_case (`soil_moisture`, dst.) dan menganggap mode `AUTO` jika field `mode` tidak dikirim.
+
+---
+
+## 10. Menjalankan dengan Docker (opsional)
+
+Pasang **Docker Desktop**, lalu dari folder root proyek:
 
 ```bash
-cd backend
-npm install
+docker compose up --build
 ```
 
-Buat file:
+- Dashboard: <http://localhost:3000>
+- API: <http://localhost:4000>
 
-```text
-.env
+Docker menjalankan **MySQL sendiri di dalam container** (user `planter`, password `planter`, database `smart_indoor_planter`), terpisah dari MySQL di laptop Anda. Migrasi dijalankan otomatis saat backend start.
+
+Agar MySQL container bisa dibuka di Workbench, tambahkan pemetaan port pada service `db` di `docker-compose.yml`:
+
+```yaml
+ports: ["3307:3306"]
 ```
 
-Kemudian konfigurasi database dan MQTT.
+Lalu sambungkan Workbench ke `127.0.0.1`, port `3307`, user `planter`. Jangan menjalankan Docker dan `npm run dev` bersamaan, karena port 3000 dan 4000 akan bentrok.
 
-Jalankan Prisma:
+Menghentikan: `docker compose down`. Untuk ikut menghapus data database: `docker compose down -v`.
+
+---
+
+## 11. Perintah yang sering dipakai
 
 ```bash
-npx prisma migrate dev
-```
+# Backend (dari folder backend)
+npm run dev                    # mode pengembangan, restart otomatis
+npm run build && npm start     # build dan jalankan versi produksi
+npx prisma studio              # lihat dan edit data lewat browser
+npx prisma migrate deploy      # terapkan migrasi yang sudah ada
+npx prisma migrate reset       # HAPUS semua data lalu buat ulang tabel
 
-Kemudian:
-
-```bash
-npm run dev
-```
-
-### Frontend
-
-Buka terminal baru:
-
-```bash
-cd frontend
-npm install
-```
-
-Buat:
-
-```text
-.env
-```
-
-Isi:
-
-```env
-NEXT_PUBLIC_API_URL=http://localhost:4000
-```
-
-Kemudian:
-
-```bash
-npm run dev
-```
-
-Buka:
-
-```text
-http://localhost:3000
+# Frontend (dari folder frontend)
+npm run dev                    # mode pengembangan
+npm run build && npm start     # versi produksi
 ```
 
 ---
 
-# 🌱 Smart Indoor Planter
+## 12. Troubleshooting
 
-Smart Indoor Planter Dashboard mengintegrasikan **IoT, real-time monitoring, automation, MQTT, REST API, database, dan web dashboard** dalam satu sistem.
-
-```text
-Sensors
-   │
-   ▼
-ESP32
-   │
-   ├── Automation
-   │
-   ├── MQTT
-   │
-   ▼
-Backend API
-   │
-   ├── MySQL
-   │
-   ├── SSE
-   │
-   ▼
-Next.js Dashboard
-   │
-   ├── Monitoring
-   ├── Charts
-   ├── Manual Control
-   └── CSV Export
-```
+| Gejala                                               | Penyebab dan solusi                                                                                            |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `P1000: Authentication failed`                       | Username atau password di `DATABASE_URL` salah. Pastikan karakter khusus sudah dikodekan (`@` jadi `%40`)      |
+| `P1001: Can't reach database server`                 | MySQL belum berjalan atau port salah. Cek service MySQL80 di Windows dan port di `DATABASE_URL` (default 3306) |
+| `P1003` atau `Unknown database`                      | Database belum dibuat. Ulangi [Langkah 1](#3-langkah-1-buat-database-di-mysql-workbench) dan cek ejaan nama    |
+| `EPERM` saat `prisma generate` di Windows            | Server backend masih berjalan dan mengunci file. Hentikan dengan `Ctrl + C`, lalu jalankan ulang perintahnya   |
+| `EADDRINUSE ... :4000`                               | Port 4000 dipakai proses lain (backend yang belum tertutup, atau Docker). Hentikan prosesnya atau ubah `PORT`  |
+| ESP32 menerima respons `400`                         | Format data ditolak validasi. Lihat pesan error di terminal backend, detail field yang salah tertulis di sana  |
+| ESP32 gagal mengirim (`-1`, `connection refused`)    | IP laptop di `serverUrl` salah, beda jaringan Wi-Fi, atau firewall memblokir port 4000 (lihat 6.3)             |
+| Dashboard tetap **offline** padahal ESP32 mengirim   | Periksa `NEXT_PUBLIC_API_URL`, dan pastikan `CORS_ORIGIN` sama dengan alamat dashboard yang Anda buka          |
+| Error CORS di console browser                        | Dashboard dibuka dari alamat selain `CORS_ORIGIN` (misalnya IP jaringan). Tambahkan alamat itu, dipisah koma   |
+| Banner merah "Gagal memuat data"                     | Backend belum berjalan atau tidak terhubung ke database. Cek terminal backend dan `/api/health`                |
+| Suhu dan kelembapan `0`                              | Sensor DHT11 tidak terbaca. Periksa kabel data di GPIO 4 dan catu dayanya                                      |
+| `Wrong boot mode detected` saat upload               | Tahan tombol **BOOT** di ESP32 saat muncul `Connecting....`                                                    |
+| File `.json` atau `.js` penuh garis merah di VS Code | Isi file tertukar. `tsconfig.json` hanya boleh berisi JSON, kode Tailwind ada di `tailwind.config.js`          |
+| Tampilan aneh setelah edit konfigurasi               | Hentikan `npm run dev`, hapus folder `.next`, jalankan lagi                                                    |
 
 ---
 
-## 👨‍💻 Author
+## 13. Catatan keamanan
 
-**Joshua Imanuel**
+- Jangan meng-commit `.env`, `.env.local`, atau password Wi-Fi ke GitHub. `.gitignore` sudah mengecualikan file `.env`, tetapi password Wi-Fi di `main.cpp` perlu Anda jaga sendiri.
+- Gunakan password MySQL yang kuat, dan untuk produksi pakai user khusus (bukan `root`).
+- Dashboard ini belum memiliki login. Jangan membukanya langsung ke internet tanpa autentikasi dan HTTPS.
+- `DEVICE_API_KEY` melindungi endpoint penerimaan data. Jika diaktifkan, tambahkan header berikut di firmware sebelum `http.POST(...)`:
 
-GitHub:
-[https://github.com/joshuaimanuel1](https://github.com/joshuaimanuel1)
-
-Repository:
-[https://github.com/joshuaimanuel1/smart-planter-dashboard](https://github.com/joshuaimanuel1/smart-planter-dashboard)
-
-````
-
-**Catatan kecil bro:** di README final di atas, bagian link GitHub/Node/MySQL masih berupa Markdown link karena ini adalah **isi file `README.md` yang memang akan kamu copy ke GitHub**. Jadi tinggal simpan sebagai:
-
-```text
-README.md
-````
-
-di root:
-
-```text
-smart-planter-dashboard/
-└── README.md
-```
-
-Lalu jalankan `git add .` → `git commit` → `git push`.
+  ```cpp
+  http.addHeader("x-api-key", "ISI_DENGAN_KEY_ANDA");
+  ```
