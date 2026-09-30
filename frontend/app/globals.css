@@ -1,0 +1,60 @@
+/* @tailwind base;@tailwind components;@tailwind utilities;
+body{background:#FBFBFD;color:#1D1D1F;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Inter","Segoe UI",sans-serif;-webkit-font-smoothing:antialiased;letter-spacing:-0.011em}
+@layer components{.card{@apply bg-white rounded-[28px] border border-black/[0.06] p-6 shadow-[0_1px_2px_rgba(0,0,0,.04),0_12px_32px_-12px_rgba(0,0,0,.08)]}
+.pill{@apply rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-azure}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}} */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+:root {
+  --bg: 251 251 253;
+  --ink: 29 29 31;
+  --mist: 245 245 247;
+  --sub: 134 134 139;
+  --surface: 255 255 255;
+  --seg: 255 255 255;
+  --onink: 255 255 255;
+  --track: 210 210 215;
+  color-scheme: light;
+}
+.dark {
+  --bg: 0 0 0;
+  --ink: 245 245 247;
+  --mist: 44 44 46;
+  --sub: 152 152 157;
+  --surface: 28 28 30;
+  --seg: 99 99 102;
+  --onink: 0 0 0;
+  --track: 72 72 74;
+  color-scheme: dark;
+}
+body {
+  background: rgb(var(--bg));
+  color: rgb(var(--ink));
+  font-family:
+    -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", "Segoe UI",
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  letter-spacing: -0.011em;
+  transition:
+    background-color 0.3s,
+    color 0.3s;
+}
+@layer components {
+  .card {
+    @apply bg-surface rounded-[28px] border border-ink/[0.08] p-6 shadow-[0_1px_2px_rgba(0,0,0,.04),0_12px_32px_-12px_rgba(0,0,0,.08)] transition-colors duration-300;
+  }
+  .dark .card {
+    box-shadow: none;
+  }
+  .pill {
+    @apply rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-azure;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}

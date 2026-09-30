@@ -1,0 +1,33 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model TelemetryLog {
+  id           Int      @id @default(autoincrement())
+  deviceId     String   @default("esp32-planter-01") @db.VarChar(64)
+  temperature  Float
+  humidity     Float
+  soilMoisture Int
+  soilStatus   String   @db.VarChar(16)
+  ldrLight     Int
+  uvIndex      Float
+  pumpOn       Boolean
+  growlightOn  Boolean
+  mode         String   @default("AUTO") @db.VarChar(16)
+  createdAt    DateTime @default(now()) @db.DateTime(3)
+
+  @@index([deviceId, createdAt])
+}
+
+model DeviceState {
+  deviceId     String   @id @default("esp32-planter-01") @db.VarChar(64)
+  mode         String   @default("AUTO") @db.VarChar(16)
+  pumpOn       Boolean  @default(false)
+  growlightOn  Boolean  @default(false)
+  updatedAt    DateTime @updatedAt @db.DateTime(3)
+}
