@@ -1,38 +1,3 @@
-// {
-//   "compilerOptions": {
-//     "target": "ES2022",
-//     "lib": ["dom", "esnext"],
-//     "jsx": "preserve",
-//     "module": "esnext",
-//     "moduleResolution": "bundler",
-//     "strict": true,
-//     "noEmit": true,
-//     "esModuleInterop": true,
-//     "skipLibCheck": true,
-//     "isolatedModules": true,
-//     "incremental": true,
-//     "allowJs": true,
-//     "plugins": [
-//       {
-//         "name": "next"
-//       }
-//     ],
-//     "paths": {
-//       "@/*": ["./*"]
-//     },
-//     "resolveJsonModule": true
-//   },
-//   "include": ["**/*.ts", "**/*.tsx", "next-env.d.ts", ".next/types/**/*.ts"],
-//   "exclude": ["node_modules"]
-// }
-
-// // const v = (n) => `rgb(var(--${n}) / <alpha-value>)`;
-// // module.exports = {
-// //   darkMode: "class",
-// //   content: ["./app/**/*.{ts,tsx}"],
-// //   theme: { extend: { colors: { ink: v("ink"), mist: v("mist"), sub: v("sub"), surface: v("surface"), seg: v("seg"), onink: v("onink"), azure: "#0A84FF" } } },
-// // };
-
 {
   "compilerOptions": {
     "target": "ES2022",

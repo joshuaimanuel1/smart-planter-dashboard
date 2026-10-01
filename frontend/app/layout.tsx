@@ -1,26 +1,8 @@
-// import "./globals.css";
-// export const metadata = {
-//   title: "Smart Indoor Planter",
-//   description: "Monitoring & otomasi tanaman indoor berbasis ESP32",
-// };
-// export default function RootLayout({
-//   children,
-// }: {
-//   children: React.ReactNode;
-// }) {
-//   return (
-//     <html lang="id">
-//       <body>{children}</body>
-//     </html>
-//   );
-// }
-
 import "./globals.css";
 export const metadata = {
   title: "Smart Indoor Planter",
   description: "Monitoring & otomasi tanaman indoor berbasis ESP32",
 };
-// Jalan sebelum render agar tidak berkedip: pakai pilihan tersimpan, kalau belum ada ikuti sistem
 const init = `try{var t=localStorage.getItem("theme");if(t==="dark"||(!t&&matchMedia("(prefers-color-scheme: dark)").matches))document.documentElement.classList.add("dark")}catch(e){}`;
 export default function RootLayout({
   children,
