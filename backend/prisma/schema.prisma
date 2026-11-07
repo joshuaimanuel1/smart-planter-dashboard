@@ -13,6 +13,7 @@ model TelemetryLog {
   temperature  Float
   humidity     Float
   soilMoisture Int
+  soilTemperature Float    @default(0)
   soilStatus   String   @db.VarChar(16)
   ldrLight     Int
   uvIndex      Float
