@@ -1,0 +1,82 @@
+{
+  "baris_total": 9273,
+  "baris_diputuskan_AI": 1481,
+  "baris_per_sumber": {
+    "LEGACY_AUTO": 7674,
+    "AI": 1481,
+    "RULE": 88,
+    "MANUAL": 30
+  },
+  "pompa": {
+    "n": 1481,
+    "agreement": 0.9993,
+    "kappa": 0.6664,
+    "precision_vs_rule": 1.0,
+    "recall_vs_rule": 0.5,
+    "f1_vs_rule": 0.6667,
+    "confusion_rule_vs_ai": {
+      "rule0_ai0_TN": 1479,
+      "rule0_ai1_FP": 0,
+      "rule1_ai0_FN": 1,
+      "rule1_ai1_TP": 1
+    },
+    "positives_rule": 2,
+    "positives_ai": 1,
+    "toggles_ai": 2,
+    "toggles_rule": 2,
+    "toggles_per_hour_ai": 0.09,
+    "toggles_per_hour_rule": 0.09,
+    "mean_confidence": 0.9671,
+    "warning": "Kelas positif < 30: metrik belum bermakna penuh, kumpulkan siklus nyata lebih banyak."
+  },
+  "lampu": {
+    "n": 1481,
+    "agreement": 0.9446,
+    "kappa": 0.8484,
+    "precision_vs_rule": 0.8678,
+    "recall_vs_rule": 0.9026,
+    "f1_vs_rule": 0.8848,
+    "confusion_rule_vs_ai": {
+      "rule0_ai0_TN": 1084,
+      "rule0_ai1_FP": 48,
+      "rule1_ai0_FN": 34,
+      "rule1_ai1_TP": 315
+    },
+    "positives_rule": 349,
+    "positives_ai": 363,
+    "toggles_ai": 62,
+    "toggles_rule": 42,
+    "toggles_per_hour_ai": 2.73,
+    "toggles_per_hour_rule": 1.85,
+    "mean_confidence": 0.7835,
+    "warning": null
+  },
+  "forecast_10_menit": {
+    "n": 3185,
+    "mae": 3.989,
+    "rmse": 6.466,
+    "mae_model": 3.989,
+    "mae_naif": 2.503,
+    "mae_rata2_5mnt": 1.993,
+    "selisih_naif_minus_model": -1.486,
+    "ci95_selisih": [
+      -2.068,
+      -0.895
+    ],
+    "layak": false
+  },
+  "forecast": {
+    "n": 3185,
+    "mae": 3.989,
+    "rmse": 6.466,
+    "mae_model": 3.989,
+    "mae_naif": 2.503,
+    "mae_rata2_5mnt": 1.993,
+    "selisih_naif_minus_model": -1.486,
+    "ci95_selisih": [
+      -2.068,
+      -0.895
+    ],
+    "layak": false
+  }
+}

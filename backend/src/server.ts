@@ -5,6 +5,7 @@ import helmet from "helmet";
 import mqtt from "mqtt";
 import { z } from "zod";
 import { PrismaClient } from "@prisma/client";
+import axios from "axios";
 
 const env = z
   .object({
@@ -20,6 +21,8 @@ const DEVICE = "esp32-planter-01";
 const TOPIC_TELEMETRY = "smartplanter/jojo/telemetry";
 const TOPIC_COMMAND = "smartplanter/jojo/command";
 const ONLINE_MS = 15_000;
+const ML_TIMEOUT_MS = 1000; // Harus < timeout HTTP ESP32 (1,5 dtk) agar ESP32 tidak menunggu sia-sia
+const BATAS_POMPA_OFF = 70;
 
 const prisma = new PrismaClient();
 const app = express();
@@ -37,6 +40,13 @@ const CAMEL: Record<string, string> = {
   uvIndex: "uv_index",
   pumpOn: "pump_on",
   growlightOn: "growlight_on",
+  predictedMoisture10min: "predicted_moisture_10min",
+  pumpConfidence: "pump_confidence",
+  lightConfidence: "light_confidence",
+  forecastBand: "forecast_band",
+  pumpRule: "pump_rule",
+  lightRule: "light_rule",
+  controlSource: "control_source",
 };
 
 const camelToSnake = (b: unknown) =>
@@ -57,6 +67,13 @@ const telemetrySchema = z.object({
   pump_on: z.boolean(),
   growlight_on: z.boolean(),
   mode: z.enum(["AUTO", "MANUAL"]).default("AUTO"),
+  predicted_moisture_10min: num.optional(),
+  pump_confidence: num.optional(),
+  light_confidence: num.optional(),
+  forecast_band: num.optional(),
+  pump_rule: z.boolean().optional(),
+  light_rule: z.boolean().optional(),
+  control_source: z.enum(["AI", "RULE", "MANUAL"]).optional(),
 });
 type Telemetry = z.infer<typeof telemetrySchema>;
 
@@ -102,6 +119,12 @@ async function ingest(raw: unknown) {
       pumpOn: p.pump_on,
       growlightOn: p.growlight_on,
       mode: p.mode,
+      predictedMoisture10min: p.predicted_moisture_10min,
+      pumpConfidence: p.pump_confidence,
+      lightConfidence: p.light_confidence,
+      pumpRule: p.pump_rule,
+      lightRule: p.light_rule,
+      controlSource: p.control_source,
     },
   });
 }
@@ -141,24 +164,127 @@ app.get(
   }),
 );
 
-// PEMBARUAN: HTTP Endpoint merespons dengan Device State agar ESP32 tahu tombol Manual ditekan
+// Integrasi Machine Learning API
 app.post(
   "/api/telemetry",
   wrap(async (req, res) => {
     if (env.DEVICE_API_KEY && req.header("x-api-key") !== env.DEVICE_API_KEY)
       return res.status(401).json({ error: "Unauthorized" });
-    await ingest(req.body);
+
+    const rawData = req.body;
 
     // Ambil status kontrol terakhir dari database
     const state = await prisma.deviceState.findUnique({
       where: { deviceId: DEVICE },
     });
 
+    const mode = state?.mode ?? "AUTO";
+    let pumpOn = state?.pumpOn ?? false;
+    let growlightOn = state?.growlightOn ?? false;
+    let predictedMoisture10min: number | undefined;
+    let pumpConfidence: number | undefined;
+    let lightConfidence: number | undefined;
+    let forecastBand: number | undefined;
+    let aiOk = false;
+    let controlSource: "AI" | "RULE" | "MANUAL" =
+      mode === "MANUAL" ? "MANUAL" : "RULE";
+
+    // JIKA MODE AUTO: Panggil API Machine Learning Python
+    if (mode === "AUTO") {
+      try {
+        // 1. Ambil riwayat 7 menit terakhir (berbasis WAKTU, bukan jumlah baris)
+        const history = await prisma.telemetryLog.findMany({
+          where: {
+            deviceId: DEVICE,
+            createdAt: { gte: new Date(Date.now() - 7 * 60_000) },
+          },
+          orderBy: { createdAt: "desc" },
+          take: 300,
+          select: {
+            createdAt: true,
+            temperature: true,
+            humidity: true,
+            soilMoisture: true,
+            soilTemperature: true,
+            ldrLight: true,
+            uvIndex: true,
+            pumpOn: true,
+          },
+        });
+
+        // 2. Minta Prediksi ke Python Microservice
+        const mlResponse = await axios.post(
+          "http://localhost:5001/predict",
+          {
+            temperature: rawData.temperature,
+            humidity: rawData.humidity,
+            soilMoisture: rawData.soilMoisture,
+            soilTemperature: rawData.soilTemperature,
+            ldrLight: rawData.ldrLight,
+            uvIndex: rawData.uvIndex,
+            timestamp: new Date().toISOString(),
+            history: history.reverse(),
+          },
+          { timeout: ML_TIMEOUT_MS },
+        );
+
+        // 3. Terapkan prediksi ML ke aktuator
+        const predictions = mlResponse.data.predictions;
+        if (
+          typeof predictions?.pump_on !== "boolean" ||
+          typeof predictions?.growlight_on !== "boolean"
+        )
+          throw new Error("Respons ML tidak valid");
+
+        pumpOn = predictions.pump_on;
+        growlightOn = predictions.growlight_on;
+
+        // Pengaman keras: jangan menyiram tanah yang sudah basah, apa pun keputusan model.
+        if (Number(rawData.soilMoisture) > BATAS_POMPA_OFF) pumpOn = false;
+
+        aiOk = true;
+        controlSource = "AI";
+        const numOrUndef = (v: unknown) =>
+          typeof v === "number" ? v : undefined;
+        predictedMoisture10min = numOrUndef(
+          predictions.predicted_moisture_10min,
+        );
+        pumpConfidence = numOrUndef(predictions.pump_confidence);
+        lightConfidence = numOrUndef(predictions.light_confidence);
+        forecastBand = numOrUndef(predictions.forecast_band);
+
+        console.log(
+          `[ML PREDICT] Pump: ${pumpOn}, Light: ${growlightOn}, Next Moist: ${predictions.predicted_moisture_10min}%`,
+        );
+      } catch (error: any) {
+        console.error(
+          "[ML Error] Gagal menghubungi Python Microservice, menggunakan rule-based fallback.",
+          error.message,
+        );
+        pumpOn = rawData.pumpRule ?? rawData.pumpOn;
+        growlightOn = rawData.lightRule ?? rawData.growlightOn;
+        controlSource = "RULE";
+      }
+    }
+
+    rawData.pumpOn = pumpOn;
+    rawData.growlightOn = growlightOn;
+    rawData.mode = mode;
+    rawData.predictedMoisture10min = predictedMoisture10min;
+    rawData.pumpConfidence = pumpConfidence;
+    rawData.lightConfidence = lightConfidence;
+    rawData.forecastBand = forecastBand;
+    rawData.controlSource = controlSource;
+
+    await ingest(rawData);
+
     res.json({
       status: "ok",
-      mode: state?.mode ?? "AUTO",
-      pumpOn: state?.pumpOn ?? false,
-      growlightOn: state?.growlightOn ?? false,
+      mode: mode,
+      pumpOn: pumpOn,
+      growlightOn: growlightOn,
+      aiOk,
+      controlSource,
     });
   }),
 );
@@ -220,10 +346,77 @@ app.get(
       }),
       prisma.telemetryLog.count({ where: { deviceId: DEVICE } }),
     ]);
+
+    // Prediksi yang dibuat 10 menit SEBELUM tiap titik, supaya bisa dibandingkan dengan nilai aktual.
+    const MS10 = 10 * 60_000,
+      TOL = 20_000;
+    let jp = 0;
+    const originSoil: (number | null)[] = [];
+    const predPrev = rows.map((r) => {
+      const target = r.createdAt.getTime() - MS10;
+      while (jp < rows.length - 1 && rows[jp + 1].createdAt.getTime() <= target)
+        jp++;
+      const c = rows[jp];
+      const ok =
+        Math.abs(c.createdAt.getTime() - target) <= TOL &&
+        c.predictedMoisture10min != null;
+      originSoil.push(ok ? c.soilMoisture : null);
+      return ok ? (c.predictedMoisture10min as number) : null;
+    });
+
+    const pairs = rows.flatMap((r, i) => {
+      const o = originSoil[i];
+      return predPrev[i] != null && r.soilMoisture > 0 && o != null && o > 0
+        ? [
+            {
+              model: Math.abs(r.soilMoisture - (predPrev[i] as number)),
+              naive: Math.abs(r.soilMoisture - o),
+            },
+          ]
+        : [];
+    });
+    const mean = (xs: number[]) =>
+      xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null;
+    const forecast = {
+      n: pairs.length,
+      mae: mean(pairs.map((x) => x.model)),
+      naiveMae: mean(pairs.map((x) => x.naive)),
+    };
+
+    // Perbandingan AI vs aturan pada baris yang diputuskan AI
+    const cmpRows = rows.filter(
+      (r) =>
+        r.mode === "AUTO" &&
+        r.controlSource === "AI" &&
+        r.pumpRule != null &&
+        r.lightRule != null,
+    );
+    const share = (k: number) => (cmpRows.length ? k / cmpRows.length : null);
+    const toggles = (xs: boolean[]) =>
+      xs.reduce((n, v, i) => (i > 0 && v !== xs[i - 1] ? n + 1 : n), 0);
+    const aiVsRule = {
+      n: cmpRows.length,
+      pumpAgreement: share(
+        cmpRows.filter((r) => r.pumpOn === r.pumpRule).length,
+      ),
+      lightAgreement: share(
+        cmpRows.filter((r) => r.growlightOn === r.lightRule).length,
+      ),
+      aiToggles: {
+        pump: toggles(cmpRows.map((r) => r.pumpOn)),
+        light: toggles(cmpRows.map((r) => r.growlightOn)),
+      },
+      ruleToggles: {
+        pump: toggles(cmpRows.map((r) => r.pumpRule as boolean)),
+        light: toggles(cmpRows.map((r) => r.lightRule as boolean)),
+      },
+    };
+
     const step = Math.max(1, Math.ceil(rows.length / 150));
     const series = rows
-      .filter((_, i) => i % step === 0)
-      .map((r) => ({
+      .map((r, i) => ({ r, i }))
+      .filter(({ i }) => i % step === 0)
+      .map(({ r, i }) => ({
         t: r.createdAt.toISOString(),
         soil: r.soilMoisture,
         soilTemperature: r.soilTemperature,
@@ -231,7 +424,9 @@ app.get(
         temp: r.temperature,
         hum: r.humidity,
         uv: r.uvIndex,
+        predicted: predPrev[i],
       }));
+
     const events = rows
       .filter(
         (r, i) =>
@@ -247,6 +442,7 @@ app.get(
         light: r.growlightOn,
         mode: r.mode,
       }));
+
     res.json({
       latest,
       online: isOnline(),
@@ -258,6 +454,8 @@ app.get(
         min: agg._min,
         samples: rows.length,
         totalRecords: total,
+        forecast,
+        aiVsRule,
       },
     });
   }),
@@ -328,7 +526,7 @@ app.get(
       "Content-Disposition": `attachment; filename="${name}"`,
     });
     res.write(
-      "id,timestamp,temperature,humidity,soil_moisture,soil_temperature,soil_status,ldr_light,uv_index,pump_on,growlight_on,mode\n",
+      "id,timestamp,temperature,humidity,soil_moisture,soil_temperature,soil_status,ldr_light,uv_index,pump_on,growlight_on,mode,predicted_moisture_10min,pump_confidence,light_confidence,pump_rule,light_rule,control_source\n",
     );
     let cursor = 0;
     for (;;) {
@@ -354,6 +552,12 @@ app.get(
               +r.pumpOn,
               +r.growlightOn,
               r.mode,
+              r.predictedMoisture10min ?? "",
+              r.pumpConfidence ?? "",
+              r.lightConfidence ?? "",
+              r.pumpRule == null ? "" : +r.pumpRule,
+              r.lightRule == null ? "" : +r.lightRule,
+              r.controlSource ?? "",
             ].join(","),
           )
           .join("\n") + "\n",

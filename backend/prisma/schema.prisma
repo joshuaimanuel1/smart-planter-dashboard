@@ -21,6 +21,12 @@ model TelemetryLog {
   growlightOn  Boolean
   mode         String   @default("AUTO") @db.VarChar(16)
   createdAt    DateTime @default(now()) @db.DateTime(3)
+  predictedMoisture10min Float?
+  pumpConfidence         Float?
+  lightConfidence        Float?
+  pumpRule               Boolean?
+  lightRule              Boolean?
+  controlSource          String?
 
   @@index([deviceId, createdAt])
 }

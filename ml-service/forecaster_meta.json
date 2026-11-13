@@ -1,0 +1,41 @@
+{
+  "horizon_s": 600,
+  "hist_s": 300,
+  "session_gap_s": 120,
+  "features": [
+    "soil_d1m",
+    "soil_d3m",
+    "soil_d5m",
+    "soil_m1_gap",
+    "soil_m5_gap",
+    "soil_std5m",
+    "soil_dev_med5m",
+    "pump_frac5m",
+    "temperature",
+    "humidity",
+    "vpd_kpa",
+    "soil_temperature",
+    "ldr_light",
+    "ldr_mean5m",
+    "uv_mean5m",
+    "temp_mean5m"
+  ],
+  "model": "gbr",
+  "target": "delta (soil(t+10m) - soil(t))",
+  "sklearn_version": "1.6.1",
+  "trained_at": "2026-11-11T19:40:25.964375+00:00",
+  "train_end_time": "2026-11-12T05:50:32.246000+00:00",
+  "deployed_on_all": true,
+  "n_pairs": 9415,
+  "metrics": {
+    "test_mae": 5.404,
+    "test_rmse": 8.89,
+    "test_r2": -0.4112,
+    "naive_mae": 7.973,
+    "smooth5m_mae": 8.76,
+    "skill_vs_naive": 0.3222,
+    "skill_vs_smooth5m": 0.3831,
+    "n_test": 2824
+  },
+  "beats_naive": true
+}
